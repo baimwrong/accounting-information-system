@@ -9,6 +9,9 @@
         <p class="text-muted mb-0 small">As of {{ date('F d, Y', strtotime($as_of_date)) }} &middot; Fundamental Equation: Assets = Liabilities + Equity</p>
     </div>
     <div class="d-flex gap-2">
+        <a href="{{ route('reports.export', ['type' => 'balance_sheet', 'as_of_date' => $as_of_date]) }}" class="btn btn-outline-success btn-sm">
+            <i class="fa-solid fa-file-csv me-1"></i> Export CSV
+        </a>
         <button class="btn btn-outline-secondary btn-sm" onclick="window.print();">
             <i class="fa-solid fa-print me-1"></i> Print Statement
         </button>

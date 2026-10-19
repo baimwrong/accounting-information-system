@@ -7,6 +7,7 @@ use App\Services\ReportService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ReportController extends Controller
 {
@@ -62,5 +63,56 @@ class ReportController extends Controller
             'startDate' => $startDate,
             'endDate' => $endDate,
         ]);
+    }
+
+    public function arAging(Request $request): View
+    {
+        $asOfDate = $request->input('as_of_date') ?: Carbon::now()->toDateString();
+        $data = $this->reportService->getArAgingReport($asOfDate);
+
+        return view('reports.ar_aging', $data);
+    }
+
+    public function apAging(Request $request): View
+    {
+        $asOfDate = $request->input('as_of_date') ?: Carbon::now()->toDateString();
+        $data = $this->reportService->getApAgingReport($asOfDate);
+
+        return view('reports.ap_aging', $data);
+    }
+
+    public function cashFlow(Request $request): View
+    {
+        $startDate = $request->input('start_date') ?: Carbon::now()->startOfYear()->toDateString();
+        $endDate = $request->input('end_date') ?: Carbon::now()->toDateString();
+
+        $data = $this->reportService->getCashFlowStatement($startDate, $endDate);
+
+        return view('reports.cash_flow', $data);
+    }
+
+    public function export(Request $request, string $type): StreamedResponse
+    {
+        $startDate = $request->input('start_date');
+        $endDate = $request->input('end_date') ?: Carbon::now()->toDateString();
+        $asOfDate = $request->input('as_of_date') ?: Carbon::now()->toDateString();
+
+        $data = match ($type) {
+            'trial_balance' => $this->reportService->getTrialBalance($startDate, $endDate),
+            'balance_sheet' => $this->reportService->getBalanceSheet($asOfDate),
+            'income_statement' => $this->reportService->getIncomeStatement(
+                $startDate ?: Carbon::now()->startOfYear()->toDateString(),
+                $endDate
+            ),
+            'ar_aging' => $this->reportService->getArAgingReport($asOfDate),
+            'ap_aging' => $this->reportService->getApAgingReport($asOfDate),
+            'cash_flow' => $this->reportService->getCashFlowStatement(
+                $startDate ?: Carbon::now()->startOfYear()->toDateString(),
+                $endDate
+            ),
+            default => abort(404, 'Invalid report type for export.'),
+        };
+
+        return $this->reportService->exportToCsv($type, $data);
     }
 }

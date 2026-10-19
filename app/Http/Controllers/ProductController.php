@@ -100,6 +100,10 @@ class ProductController extends Controller
 
     public function destroy(Request $request, Product $product): RedirectResponse
     {
+        if ($product->invoiceItems()->exists() || $product->billItems()->exists()) {
+            return back()->with('error', 'Cannot delete item because it has recorded invoice or bill transaction history. You can deactivate it instead.');
+        }
+
         $code = $product->code;
         $name = $product->name;
         $product->delete();

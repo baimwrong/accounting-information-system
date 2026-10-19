@@ -38,6 +38,12 @@
                     <h6 class="fw-bold mb-3">Change Password <span class="text-muted fw-normal small">(Leave blank to keep current)</span></h6>
 
                     <div class="mb-3">
+                        <label class="form-label fw-semibold">Current Password</label>
+                        <input type="password" name="current_password" class="form-control" placeholder="••••••••">
+                        <div class="form-text">Required only when updating your password.</div>
+                    </div>
+
+                    <div class="mb-3">
                         <label class="form-label fw-semibold">New Password</label>
                         <input type="password" name="password" class="form-control" placeholder="••••••••">
                     </div>

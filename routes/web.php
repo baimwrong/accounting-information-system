@@ -18,7 +18,7 @@ use Illuminate\Support\Facades\Route;
 // Authentication
 Route::middleware('guest')->group(function () {
     Route::get('/login', [AuthController::class, 'showLogin'])->name('login');
-    Route::post('/login', [AuthController::class, 'login'])->name('login.post');
+    Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:5,1')->name('login.post');
 });
 
 Route::middleware('auth')->group(function () {
@@ -53,10 +53,28 @@ Route::middleware('auth')->group(function () {
     Route::get('/journal-entries/{journalEntry}', [JournalEntryController::class, 'show'])->name('journal-entries.show');
 
     // Contacts (Customers & Vendors)
-    Route::resource('contacts', ContactController::class);
+    Route::get('/contacts', [ContactController::class, 'index'])->name('contacts.index');
+    Route::get('/contacts/{contact}', [ContactController::class, 'show'])->name('contacts.show');
+    Route::middleware('role:admin|accountant')->group(function () {
+        Route::get('/contacts/create', [ContactController::class, 'create'])->name('contacts.create');
+        Route::post('/contacts', [ContactController::class, 'store'])->name('contacts.store');
+        Route::get('/contacts/{contact}/edit', [ContactController::class, 'edit'])->name('contacts.edit');
+        Route::match(['put', 'patch'], '/contacts/{contact}', [ContactController::class, 'update'])->name('contacts.update');
+    });
+    Route::delete('/contacts/{contact}', [ContactController::class, 'destroy'])
+        ->middleware('role:admin')
+        ->name('contacts.destroy');
 
     // Products / Inventory / Services
-    Route::resource('products', ProductController::class)->except(['create', 'show']);
+    Route::get('/products', [ProductController::class, 'index'])->name('products.index');
+    Route::middleware('role:admin|accountant')->group(function () {
+        Route::post('/products', [ProductController::class, 'store'])->name('products.store');
+        Route::get('/products/{product}/edit', [ProductController::class, 'edit'])->name('products.edit');
+        Route::match(['put', 'patch'], '/products/{product}', [ProductController::class, 'update'])->name('products.update');
+    });
+    Route::delete('/products/{product}', [ProductController::class, 'destroy'])
+        ->middleware('role:admin')
+        ->name('products.destroy');
 
     // Invoices (Sales / AR)
     Route::get('/invoices', [InvoiceController::class, 'index'])->name('invoices.index');
@@ -76,8 +94,11 @@ Route::middleware('auth')->group(function () {
     });
     Route::get('/bills/{bill}', [BillController::class, 'show'])->name('bills.show');
 
-    // Payments
+    // Payments & Treasury
     Route::get('/payments', [PaymentController::class, 'index'])->name('payments.index');
+    Route::middleware('role:admin|accountant')->group(function () {
+        Route::post('/payments/transfer', [PaymentController::class, 'transfer'])->name('payments.transfer');
+    });
     Route::get('/payments/{payment}', [PaymentController::class, 'show'])->name('payments.show');
 
     // Financial Reports
@@ -86,6 +107,10 @@ Route::middleware('auth')->group(function () {
         Route::get('/balance-sheet', [ReportController::class, 'balanceSheet'])->name('balance-sheet');
         Route::get('/income-statement', [ReportController::class, 'incomeStatement'])->name('income-statement');
         Route::get('/general-ledger', [ReportController::class, 'generalLedger'])->name('general-ledger');
+        Route::get('/ar-aging', [ReportController::class, 'arAging'])->name('ar-aging');
+        Route::get('/ap-aging', [ReportController::class, 'apAging'])->name('ap-aging');
+        Route::get('/cash-flow', [ReportController::class, 'cashFlow'])->name('cash-flow');
+        Route::get('/export/{type}', [ReportController::class, 'export'])->name('export');
     });
 
     // Fiscal Years

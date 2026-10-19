@@ -12,6 +12,9 @@
         </p>
     </div>
     <div class="d-flex gap-2">
+        <a href="{{ route('reports.export', ['type' => 'income_statement', 'start_date' => $start_date, 'end_date' => $end_date]) }}" class="btn btn-outline-success btn-sm">
+            <i class="fa-solid fa-file-csv me-1"></i> Export CSV
+        </a>
         <button class="btn btn-outline-secondary btn-sm" onclick="window.print();">
             <i class="fa-solid fa-print me-1"></i> Print Statement
         </button>

@@ -96,9 +96,11 @@
                         @endswitch
                     </td>
                     <td class="text-muted small text-capitalize">{{ str_replace('_', ' ', $acc->sub_type ?? '-') }}</td>
-                    <td class="text-uppercase small fw-semibold text-muted">{{ $acc->normal_balance }}</td>
-                    <td class="num-col fw-bold {{ $acc->balance < 0 ? 'text-danger' : 'text-dark' }}">
-                        ${{ number_format($acc->balance, 2) }}
+                    @php
+                        $displayBalance = $acc->current_balance ?? $acc->balance;
+                    @endphp
+                    <td class="num-col fw-bold {{ $displayBalance < 0 ? 'text-danger' : 'text-dark' }}">
+                        ${{ number_format($displayBalance, 2) }}
                     </td>
                     <td>
                         @if($acc->is_active)

@@ -322,6 +322,24 @@
                         <span>Profit & Loss</span>
                     </a>
                 </li>
+                <li>
+                    <a href="{{ route('reports.cash-flow') }}" class="nav-link {{ request()->routeIs('reports.cash-flow') ? 'active' : '' }}">
+                        <i class="fa-solid fa-money-bill-wave"></i>
+                        <span>Cash Flow Statement</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="{{ route('reports.ar-aging') }}" class="nav-link {{ request()->routeIs('reports.ar-aging') ? 'active' : '' }}">
+                        <i class="fa-solid fa-clock-rotate-left"></i>
+                        <span>AR Aging</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="{{ route('reports.ap-aging') }}" class="nav-link {{ request()->routeIs('reports.ap-aging') ? 'active' : '' }}">
+                        <i class="fa-solid fa-hourglass-half"></i>
+                        <span>AP Aging</span>
+                    </a>
+                </li>
             </ul>
 
             <div class="sidebar-section-title">Administration</div>

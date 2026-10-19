@@ -17,37 +17,69 @@ use Illuminate\Support\Facades\DB;
 class AccountingService
 {
     /**
-     * Generate sequential entry number: JE-YYYYMM-XXXX
+     * Generate sequential entry number: JE-YYYYMM-XXXX (thread-safe).
      */
     public function generateEntryNumber(string $prefix = 'JE'): string
     {
+        return $this->generateNextDocumentNumber(JournalEntry::class, 'entry_number', $prefix);
+    }
+
+    /**
+     * Concurrency-safe sequential document number generator.
+     */
+    public function generateNextDocumentNumber(string $modelClass, string $field, string $prefix): string
+    {
         $ym = Carbon::now()->format('Ym');
-        $latest = JournalEntry::where('entry_number', 'LIKE', "{$prefix}-{$ym}-%")
+        $searchPrefix = "{$prefix}-{$ym}-";
+
+        $latest = $modelClass::where($field, 'LIKE', "{$searchPrefix}%")
             ->orderBy('id', 'desc')
             ->first();
 
         $seq = 1;
         if ($latest) {
-            $parts = explode('-', $latest->entry_number);
-            $seq = ((int) end($parts)) + 1;
+            $parts = explode('-', $latest->{$field});
+            $lastPart = (int) end($parts);
+            if ($lastPart >= 1) {
+                $seq = $lastPart + 1;
+            }
         }
 
-        return sprintf('%s-%s-%04d', $prefix, $ym, $seq);
+        do {
+            $candidate = sprintf('%s%04d', $searchPrefix, $seq);
+            $exists = $modelClass::where($field, $candidate)->exists();
+            if ($exists) {
+                $seq++;
+            }
+        } while ($exists);
+
+        return $candidate;
     }
 
     /**
      * Check if date falls in an active fiscal year.
+     * Throws an exception if the period is closed or if no active fiscal year is defined.
      */
     public function assertDateInActiveFiscalYear(string|Carbon $date): void
     {
         $d = Carbon::parse($date)->toDateString();
-        $closed = FiscalYear::where('status', 'closed')
+
+        $active = FiscalYear::where('status', 'active')
             ->where('start_date', '<=', $d)
             ->where('end_date', '>=', $d)
             ->exists();
 
-        if ($closed) {
-            throw new Exception("Accounting operations are locked for closed fiscal period on {$d}.");
+        if (! $active) {
+            $closed = FiscalYear::where('status', 'closed')
+                ->where('start_date', '<=', $d)
+                ->where('end_date', '>=', $d)
+                ->exists();
+
+            if ($closed) {
+                throw new Exception("Accounting operations are locked for closed fiscal period on {$d}.");
+            }
+
+            throw new Exception("No active fiscal period found covering {$d}. Please ensure an active fiscal year is configured.");
         }
     }
 
@@ -185,6 +217,9 @@ class AccountingService
      * DR: Accounts Receivable (Asset) = Total Amount
      * CR: Product Revenue Accounts = Subtotal
      * CR: Sales Tax Payable (Liability) = Tax Total (if any)
+     * Plus Perpetual Inventory / COGS:
+     * DR: Cost of Goods Sold (Expense) = Line Cost
+     * CR: Merchandise Inventory (Asset) = Line Cost
      */
     public function postInvoice(Invoice $invoice, User $user): JournalEntry
     {
@@ -227,6 +262,36 @@ class AccountingService
                 'amount' => (float) $invoice->tax_total,
                 'memo' => "Sales Tax for Invoice {$invoice->invoice_number}",
             ];
+        }
+
+        // Inventory Stock Decrement and COGS Double-Entry Posting
+        foreach ($invoice->items as $item) {
+            $product = $item->product;
+            if ($product && $product->type === 'goods') {
+                $unitCost = (float) $product->purchase_price;
+                $lineCost = round((float) $item->quantity * $unitCost, 4);
+
+                if ($lineCost > 0 && $product->expense_account_id && $product->asset_account_id) {
+                    // DR: Cost of Goods Sold (Expense)
+                    $items[] = [
+                        'account_id' => $product->expense_account_id,
+                        'type' => 'debit',
+                        'amount' => $lineCost,
+                        'memo' => "COGS for {$product->name} (Qty: {$item->quantity})",
+                    ];
+
+                    // CR: Merchandise Inventory (Asset)
+                    $items[] = [
+                        'account_id' => $product->asset_account_id,
+                        'type' => 'credit',
+                        'amount' => $lineCost,
+                        'memo' => "Inventory reduction for {$product->name}",
+                    ];
+                }
+
+                // Decrement physical stock on hand
+                $product->decrement('quantity_on_hand', (float) $item->quantity);
+            }
         }
 
         $entry = $this->createJournalEntry([
@@ -302,6 +367,7 @@ class AccountingService
      * DR: Expense / Inventory Accounts = Subtotal
      * DR: Tax Expense / VAT Input = Tax Total (if any)
      * CR: Accounts Payable (Liability) = Total Amount
+     * Plus increment physical product stock for goods.
      */
     public function postBill(Bill $bill, User $user): JournalEntry
     {
@@ -323,6 +389,11 @@ class AccountingService
                 'amount' => (float) $item->subtotal,
                 'memo' => "Bill {$bill->bill_number} - {$item->description}",
             ];
+
+            // Increment inventory stock on hand when purchasing physical goods
+            if ($item->product && $item->product->type === 'goods') {
+                $item->product->increment('quantity_on_hand', (float) $item->quantity);
+            }
         }
 
         if ((float) $bill->tax_total > 0) {
@@ -407,5 +478,193 @@ class AccountingService
         }
 
         return $entry;
+    }
+
+    /**
+     * Close a fiscal year by generating a year-end closing journal entry to Retained Earnings
+     * and locking the fiscal period.
+     */
+    public function closeFiscalYear(FiscalYear $fiscalYear, User $user): ?JournalEntry
+    {
+        if ($fiscalYear->status === 'closed') {
+            throw new Exception("Fiscal year {$fiscalYear->name} is already closed.");
+        }
+
+        return DB::transaction(function () use ($fiscalYear, $user) {
+            $startDate = $fiscalYear->start_date->toDateString();
+            $endDate = $fiscalYear->end_date->toDateString();
+
+            // Find Retained Earnings account (Equity)
+            $retainedEarnings = Account::where('code', '3990')->first()
+                ?? Account::where('sub_type', 'equity')->where('name', 'LIKE', '%Retained%')->first()
+                ?? Account::where('type', 'equity')->first();
+
+            if (! $retainedEarnings) {
+                throw new Exception('Retained Earnings account could not be found to transfer year-end net income.');
+            }
+
+            // Aggregate revenue and expense account balances for this period
+            $reportService = app(ReportService::class);
+            $periodSums = $reportService->getBatchPeriodSums($startDate, $endDate);
+
+            $revenueAccounts = Account::where('type', 'revenue')->get();
+            $expenseAccounts = Account::where('type', 'expense')->get();
+
+            $closingItems = [];
+            $totalRevenue = 0.0;
+            $totalExpense = 0.0;
+
+            // Zero out Revenue accounts (Normally credit, so debit to zero out)
+            foreach ($revenueAccounts as $acc) {
+                $dr = $periodSums[$acc->id]['debit'] ?? 0.0;
+                $cr = $periodSums[$acc->id]['credit'] ?? 0.0;
+                $net = $acc->normal_balance === 'debit' ? ($dr - $cr) : ($cr - $dr);
+
+                if (abs($net) > 0.0001) {
+                    $totalRevenue += $net;
+                    if ($net > 0) {
+                        $closingItems[] = [
+                            'account_id' => $acc->id,
+                            'type' => 'debit',
+                            'amount' => round($net, 4),
+                            'memo' => "Year-end zeroing of revenue account {$acc->code} - {$acc->name}",
+                        ];
+                    } else {
+                        $closingItems[] = [
+                            'account_id' => $acc->id,
+                            'type' => 'credit',
+                            'amount' => round(abs($net), 4),
+                            'memo' => "Year-end zeroing of negative revenue {$acc->code} - {$acc->name}",
+                        ];
+                    }
+                }
+            }
+
+            // Zero out Expense accounts (Normally debit, so credit to zero out)
+            foreach ($expenseAccounts as $acc) {
+                $dr = $periodSums[$acc->id]['debit'] ?? 0.0;
+                $cr = $periodSums[$acc->id]['credit'] ?? 0.0;
+                $net = $acc->normal_balance === 'debit' ? ($dr - $cr) : ($cr - $dr);
+
+                if (abs($net) > 0.0001) {
+                    $totalExpense += $net;
+                    if ($net > 0) {
+                        $closingItems[] = [
+                            'account_id' => $acc->id,
+                            'type' => 'credit',
+                            'amount' => round($net, 4),
+                            'memo' => "Year-end zeroing of expense account {$acc->code} - {$acc->name}",
+                        ];
+                    } else {
+                        $closingItems[] = [
+                            'account_id' => $acc->id,
+                            'type' => 'debit',
+                            'amount' => round(abs($net), 4),
+                            'memo' => "Year-end zeroing of negative expense {$acc->code} - {$acc->name}",
+                        ];
+                    }
+                }
+            }
+
+            $closingEntry = null;
+
+            if (count($closingItems) > 0) {
+                $netProfit = $totalRevenue - $totalExpense;
+
+                if (abs($netProfit) > 0.0001) {
+                    if ($netProfit > 0) {
+                        // Net Profit: Credit Retained Earnings
+                        $closingItems[] = [
+                            'account_id' => $retainedEarnings->id,
+                            'type' => 'credit',
+                            'amount' => round($netProfit, 4),
+                            'memo' => "Transfer Net Profit to Retained Earnings for {$fiscalYear->name}",
+                        ];
+                    } else {
+                        // Net Loss: Debit Retained Earnings
+                        $closingItems[] = [
+                            'account_id' => $retainedEarnings->id,
+                            'type' => 'debit',
+                            'amount' => round(abs($netProfit), 4),
+                            'memo' => "Transfer Net Loss to Retained Earnings for {$fiscalYear->name}",
+                        ];
+                    }
+                }
+
+                // Post closing journal entry
+                $closingEntry = $this->createJournalEntry([
+                    'entry_number' => "JE-CLOSE-{$fiscalYear->id}",
+                    'date' => $endDate,
+                    'reference' => "CLOSE-{$fiscalYear->name}",
+                    'description' => "Year-End Closing Journal Entry for {$fiscalYear->name}",
+                    'source_type' => 'year_end_close',
+                    'source_id' => $fiscalYear->id,
+                    'items' => $closingItems,
+                ], $user, true);
+            }
+
+            // Lock the fiscal year
+            $fiscalYear->update([
+                'status' => 'closed',
+                'closed_at' => Carbon::now(),
+                'closed_by' => $user->id,
+            ]);
+
+            AuditLog::record(
+                $user,
+                'close_fiscal_year',
+                "Closed fiscal year {$fiscalYear->name} with year-end closing entry ".($closingEntry?->entry_number ?? 'None'),
+                $fiscalYear
+            );
+
+            return $closingEntry;
+        });
+    }
+
+    /**
+     * Transfer funds between two cash/bank accounts.
+     */
+    public function transferBankFunds(
+        int $sourceAccountId,
+        int $destinationAccountId,
+        float $amount,
+        string $date,
+        ?string $reference,
+        ?string $description,
+        User $user
+    ): JournalEntry {
+        if ($sourceAccountId === $destinationAccountId) {
+            throw new Exception('Source and destination accounts must be different.');
+        }
+
+        if ($amount <= 0) {
+            throw new Exception('Transfer amount must be greater than zero.');
+        }
+
+        $source = Account::findOrFail($sourceAccountId);
+        $dest = Account::findOrFail($destinationAccountId);
+
+        $this->assertDateInActiveFiscalYear($date);
+
+        return $this->createJournalEntry([
+            'date' => $date,
+            'reference' => $reference,
+            'description' => $description ?: "Bank Transfer: {$source->name} -> {$dest->name}",
+            'source_type' => 'bank_transfer',
+            'items' => [
+                [
+                    'account_id' => $dest->id,
+                    'type' => 'debit',
+                    'amount' => round($amount, 4),
+                    'memo' => "Transfer deposit from {$source->name}",
+                ],
+                [
+                    'account_id' => $source->id,
+                    'type' => 'credit',
+                    'amount' => round($amount, 4),
+                    'memo' => "Transfer withdrawal to {$dest->name}",
+                ],
+            ],
+        ], $user, true);
     }
 }

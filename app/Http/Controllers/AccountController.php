@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Account;
 use App\Models\AuditLog;
+use App\Models\Payment;
+use App\Models\Product;
 use App\Services\ReportService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -32,6 +34,12 @@ class AccountController extends Controller
         }
 
         $accounts = $query->paginate(25)->withQueryString();
+        $accountIds = $accounts->pluck('id')->all();
+        $balances = $this->reportService->getBatchAccountBalances(null, $accountIds);
+        foreach ($accounts as $acc) {
+            $acc->current_balance = $balances[$acc->id] ?? 0.0;
+        }
+
         $parentAccounts = Account::orderBy('code')->get();
 
         return view('accounts.index', compact('accounts', 'parentAccounts'));
@@ -102,6 +110,18 @@ class AccountController extends Controller
 
         if ($account->journalEntryItems()->exists()) {
             return back()->with('error', 'Cannot delete account because it has recorded journal entries. You can deactivate it instead.');
+        }
+
+        if ($account->children()->exists()) {
+            return back()->with('error', 'Cannot delete account because it has sub-accounts attached. Reassign or delete sub-accounts first.');
+        }
+
+        if (Product::where('income_account_id', $account->id)->orWhere('expense_account_id', $account->id)->orWhere('asset_account_id', $account->id)->exists()) {
+            return back()->with('error', 'Cannot delete account because it is assigned as an income, expense, or asset account on products.');
+        }
+
+        if (Payment::where('bank_account_id', $account->id)->exists()) {
+            return back()->with('error', 'Cannot delete account because it is assigned as a bank/cash account on recorded payments.');
         }
 
         $code = $account->code;

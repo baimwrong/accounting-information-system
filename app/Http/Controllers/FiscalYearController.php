@@ -4,13 +4,18 @@ namespace App\Http\Controllers;
 
 use App\Models\AuditLog;
 use App\Models\FiscalYear;
-use Carbon\Carbon;
+use App\Services\AccountingService;
+use Exception;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
 
 class FiscalYearController extends Controller
 {
+    public function __construct(
+        protected AccountingService $accountingService
+    ) {}
+
     public function index(): View
     {
         $fiscalYears = FiscalYear::with('closedByUser')->orderBy('start_date', 'desc')->paginate(15);
@@ -49,19 +54,17 @@ class FiscalYearController extends Controller
             return back()->with('info', 'This fiscal period is already closed.');
         }
 
-        $fiscalYear->update([
-            'status' => 'closed',
-            'closed_at' => Carbon::now(),
-            'closed_by' => $request->user()->id,
-        ]);
+        try {
+            $closingEntry = $this->accountingService->closeFiscalYear($fiscalYear, $request->user());
 
-        AuditLog::record(
-            $request->user(),
-            'close_fiscal_year',
-            "Closed and locked fiscal period {$fiscalYear->name}. Historic transactions are now read-only.",
-            $fiscalYear
-        );
+            $msg = "Fiscal Year {$fiscalYear->name} closed and locked.";
+            if ($closingEntry) {
+                $msg .= " Year-end closing journal entry {$closingEntry->entry_number} posted to Retained Earnings.";
+            }
 
-        return redirect()->route('fiscal-years.index')->with('success', "Fiscal Year {$fiscalYear->name} closed and locked.");
+            return redirect()->route('fiscal-years.index')->with('success', $msg);
+        } catch (Exception $e) {
+            return back()->with('error', $e->getMessage());
+        }
     }
 }

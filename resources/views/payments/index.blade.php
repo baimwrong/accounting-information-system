@@ -8,6 +8,13 @@
         <h3 class="fw-bold mb-1">Cash Receipts & Disbursements</h3>
         <p class="text-muted mb-0 small">Audit trail of bank transactions, customer receipts, and vendor disbursements</p>
     </div>
+    @if(in_array(auth()->user()->role, ['admin', 'accountant']))
+    <div class="d-flex gap-2">
+        <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#transferModal">
+            <i class="fa-solid fa-arrow-right-arrow-left me-1"></i> Inter-Bank Transfer
+        </button>
+    </div>
+    @endif
 </div>
 
 <!-- Filters -->
@@ -100,4 +107,82 @@
     </div>
     @endif
 </div>
+
+@if(in_array(auth()->user()->role, ['admin', 'accountant']))
+<!-- Inter-Bank Transfer Modal -->
+<div class="modal fade" id="transferModal" tabindex="-1" aria-labelledby="transferModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form action="{{ route('payments.transfer') }}" method="POST">
+                @csrf
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold" id="transferModalLabel">
+                        <i class="fa-solid fa-arrow-right-arrow-left text-primary me-2"></i>Inter-Bank Fund Transfer
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small mb-3">
+                        Move funds between cash and bank accounts. An automated balanced General Ledger journal entry will be recorded and posted immediately.
+                    </p>
+                    
+                    <div class="mb-3">
+                        <label for="source_account_id" class="form-label small fw-semibold">Source Account (Transfer Out / Credit)</label>
+                        <select name="source_account_id" id="source_account_id" class="form-select form-select-sm" required>
+                            <option value="">Select Originating Account...</option>
+                            @foreach($bankAccounts as $acc)
+                            <option value="{{ $acc->id }}" {{ old('source_account_id') == $acc->id ? 'selected' : '' }}>
+                                {{ $acc->code }} - {{ $acc->name }}
+                            </option>
+                            @endforeach
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="destination_account_id" class="form-label small fw-semibold">Destination Account (Transfer In / Debit)</label>
+                        <select name="destination_account_id" id="destination_account_id" class="form-select form-select-sm" required>
+                            <option value="">Select Destination Account...</option>
+                            @foreach($bankAccounts as $acc)
+                            <option value="{{ $acc->id }}" {{ old('destination_account_id') == $acc->id ? 'selected' : '' }}>
+                                {{ $acc->code }} - {{ $acc->name }}
+                            </option>
+                            @endforeach
+                        </select>
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-sm-6">
+                            <label for="amount" class="form-label small fw-semibold">Amount ($)</label>
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text">$</span>
+                                <input type="number" step="0.01" min="0.01" name="amount" id="amount" class="form-control" value="{{ old('amount') }}" required placeholder="0.00">
+                            </div>
+                        </div>
+                        <div class="col-sm-6">
+                            <label for="date" class="form-label small fw-semibold">Transfer Date</label>
+                            <input type="date" name="date" id="date" class="form-control form-control-sm" value="{{ old('date', date('Y-m-d')) }}" required>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="reference" class="form-label small fw-semibold">Reference / Wire # (Optional)</label>
+                        <input type="text" name="reference" id="reference" class="form-control form-control-sm" value="{{ old('reference') }}" placeholder="e.g. WIRE-84920">
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="description" class="form-label small fw-semibold">Description / Memo (Optional)</label>
+                        <input type="text" name="description" id="description" class="form-control form-control-sm" value="{{ old('description') }}" placeholder="e.g. Funding payroll operating account">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="fa-solid fa-check me-1"></i> Post Bank Transfer
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+@endif
 @endsection
