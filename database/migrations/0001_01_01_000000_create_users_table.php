@@ -20,6 +20,7 @@ return new class extends Migration
             $table->string('role')->default('accountant')->index();
             $table->boolean('is_active')->default(true);
             $table->rememberToken();
+            $table->softDeletes();
             $table->timestamps();
         });
 

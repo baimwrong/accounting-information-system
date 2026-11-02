@@ -32,18 +32,19 @@ class AccountingService
         $ym = Carbon::now()->format('Ym');
         $searchPrefix = "{$prefix}-{$ym}-";
 
-        $latest = $modelClass::where($field, 'LIKE', "{$searchPrefix}%")
-            ->orderBy('id', 'desc')
-            ->first();
+        $records = $modelClass::where($field, 'LIKE', "{$searchPrefix}%")
+            ->pluck($field);
 
-        $seq = 1;
-        if ($latest) {
-            $parts = explode('-', $latest->{$field});
-            $lastPart = (int) end($parts);
-            if ($lastPart >= 1) {
-                $seq = $lastPart + 1;
+        $maxSeq = 0;
+        foreach ($records as $val) {
+            $parts = explode('-', $val);
+            $num = (int) end($parts);
+            if ($num > $maxSeq) {
+                $maxSeq = $num;
             }
         }
+
+        $seq = $maxSeq + 1;
 
         do {
             $candidate = sprintf('%s%04d', $searchPrefix, $seq);
@@ -54,6 +55,23 @@ class AccountingService
         } while ($exists);
 
         return $candidate;
+    }
+
+    public function generateInvoiceNumber(string $prefix = 'INV'): string
+    {
+        return $this->generateNextDocumentNumber(Invoice::class, 'invoice_number', $prefix);
+    }
+
+    public function generateBillNumber(string $prefix = 'BILL'): string
+    {
+        return $this->generateNextDocumentNumber(Bill::class, 'bill_number', $prefix);
+    }
+
+    public function generatePaymentNumber(string $type = 'received'): string
+    {
+        $prefix = $type === 'sent' ? 'PAY' : 'REC';
+
+        return $this->generateNextDocumentNumber(Payment::class, 'payment_number', $prefix);
     }
 
     /**
@@ -390,9 +408,22 @@ class AccountingService
                 'memo' => "Bill {$bill->bill_number} - {$item->description}",
             ];
 
-            // Increment inventory stock on hand when purchasing physical goods
+            // Increment inventory stock on hand and update Moving Average Cost (AVCO)
             if ($item->product && $item->product->type === 'goods') {
-                $item->product->increment('quantity_on_hand', (float) $item->quantity);
+                $product = $item->product;
+                $currentQty = max(0, (float) $product->quantity_on_hand);
+                $currentCost = max(0, (float) $product->purchase_price);
+                $purchasedQty = max(0, (float) $item->quantity);
+                $purchasedPrice = max(0, (float) $item->unit_price);
+
+                $totalQty = $currentQty + $purchasedQty;
+                if ($totalQty > 0 && $purchasedPrice > 0) {
+                    $newAvgCost = (($currentQty * $currentCost) + ($purchasedQty * $purchasedPrice)) / $totalQty;
+                    $product->purchase_price = round($newAvgCost, 4);
+                }
+
+                $product->quantity_on_hand = $totalQty;
+                $product->save();
             }
         }
 
@@ -666,5 +697,93 @@ class AccountingService
                 ],
             ],
         ], $user, true);
+    }
+
+    /**
+     * Void a Sales Invoice, reverse its general ledger entry, and restore physical inventory.
+     */
+    public function voidInvoice(Invoice $invoice, User $user, string $reason = ''): Invoice
+    {
+        if ($invoice->status === 'voided') {
+            return $invoice;
+        }
+
+        if ((float) $invoice->paid_amount > 0) {
+            throw new Exception("Cannot void invoice {$invoice->invoice_number} because payments have already been recorded against it. Void the associated payments first.");
+        }
+
+        $this->assertDateInActiveFiscalYear($invoice->issue_date);
+
+        return DB::transaction(function () use ($invoice, $user, $reason) {
+            // Void linked journal entry if exists
+            if ($invoice->journalEntry && $invoice->journalEntry->status !== 'voided') {
+                $this->voidJournalEntry($invoice->journalEntry, $user, "Voided with Invoice {$invoice->invoice_number}: {$reason}");
+            }
+
+            // Restore physical goods inventory
+            foreach ($invoice->items as $item) {
+                if ($item->product && $item->product->type === 'goods') {
+                    $item->product->increment('quantity_on_hand', (float) $item->quantity);
+                }
+            }
+
+            $invoice->update([
+                'status' => 'voided',
+                'notes' => trim($invoice->notes.' '."[VOIDED: {$reason}]"),
+            ]);
+
+            AuditLog::record(
+                $user,
+                'void_invoice',
+                "Voided sales invoice {$invoice->invoice_number}: {$reason}",
+                $invoice
+            );
+
+            return $invoice;
+        });
+    }
+
+    /**
+     * Void a Vendor Bill, reverse its general ledger entry, and restore inventory stock.
+     */
+    public function voidBill(Bill $bill, User $user, string $reason = ''): Bill
+    {
+        if ($bill->status === 'voided') {
+            return $bill;
+        }
+
+        if ((float) $bill->paid_amount > 0) {
+            throw new Exception("Cannot void bill {$bill->bill_number} because payments have already been disbursed against it. Void the associated payments first.");
+        }
+
+        $this->assertDateInActiveFiscalYear($bill->bill_date);
+
+        return DB::transaction(function () use ($bill, $user, $reason) {
+            // Void linked journal entry if exists
+            if ($bill->journalEntry && $bill->journalEntry->status !== 'voided') {
+                $this->voidJournalEntry($bill->journalEntry, $user, "Voided with Bill {$bill->bill_number}: {$reason}");
+            }
+
+            // Deduct physical goods inventory added upon bill posting
+            foreach ($bill->items as $item) {
+                if ($item->product && $item->product->type === 'goods') {
+                    $item->product->decrement('quantity_on_hand', (float) $item->quantity);
+                }
+            }
+
+            $bill->update([
+                'status' => 'voided',
+                'notes' => trim($bill->notes.' '."[VOIDED: {$reason}]"),
+            ]);
+
+            AuditLog::record(
+                $user,
+                'void_bill',
+                "Voided vendor bill {$bill->bill_number}: {$reason}",
+                $bill
+            );
+
+            return $bill;
+        });
     }
 }

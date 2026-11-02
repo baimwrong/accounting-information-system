@@ -24,6 +24,8 @@ class Payment extends Model
         'reference',
         'notes',
         'created_by',
+        'bank_reconciliation_id',
+        'reconciled_at',
     ];
 
     protected function casts(): array
@@ -31,6 +33,7 @@ class Payment extends Model
         return [
             'payment_date' => 'date',
             'amount' => 'decimal:4',
+            'reconciled_at' => 'datetime',
         ];
     }
 
@@ -62,5 +65,15 @@ class Payment extends Model
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function bankReconciliation(): BelongsTo
+    {
+        return $this->belongsTo(BankReconciliation::class);
+    }
+
+    public function isReconciled(): bool
+    {
+        return ! is_null($this->reconciled_at);
     }
 }

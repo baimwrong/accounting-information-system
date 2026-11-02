@@ -14,19 +14,24 @@
                 <span class="badge bg-info text-dark">PARTIALLY PAID</span>
             @elseif($invoice->status === 'sent')
                 <span class="badge bg-primary">AWAITING PAYMENT</span>
+            @elseif($invoice->status === 'voided')
+                <span class="badge bg-danger">VOIDED</span>
             @else
                 <span class="badge bg-secondary text-uppercase">{{ $invoice->status }}</span>
             @endif
             &middot; Customer: <span class="fw-semibold text-dark">{{ $invoice->customer->name }}</span>
         </p>
     </div>
-    <div class="d-flex gap-2">
+    <div class="d-flex gap-2 d-print-none">
         <button class="btn btn-outline-secondary btn-sm" onclick="window.print();">
             <i class="fa-solid fa-print me-1"></i> Print Invoice
         </button>
-        @if(!$invoice->isPaid() && auth()->user()->isAccountant())
+        @if(!$invoice->isPaid() && $invoice->status !== 'voided' && auth()->user()->isAccountant())
         <button class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#recordPaymentModal">
             <i class="fa-solid fa-money-bill-wave me-1"></i> Record Payment
+        </button>
+        <button class="btn btn-outline-danger btn-sm" data-bs-toggle="modal" data-bs-target="#voidInvoiceModal">
+            <i class="fa-solid fa-ban me-1"></i> Void Invoice
         </button>
         @endif
         <a href="{{ route('invoices.index') }}" class="btn btn-outline-primary btn-sm">
@@ -280,6 +285,41 @@
                     <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
                     <button type="submit" class="btn btn-success btn-sm fw-semibold">
                         <i class="fa-solid fa-check me-1"></i> Confirm & Post Payment
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+@endif
+
+@if(!$invoice->isPaid() && $invoice->status !== 'voided' && auth()->user()->isAccountant())
+<!-- Void Invoice Modal -->
+<div class="modal fade" id="voidInvoiceModal" tabindex="-1" aria-labelledby="voidInvoiceModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form action="{{ route('invoices.void', $invoice) }}" method="POST">
+                @csrf
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title fs-6 fw-bold" id="voidInvoiceModalLabel">
+                        <i class="fa-solid fa-triangle-exclamation me-1"></i> Void Sales Invoice {{ $invoice->invoice_number }}
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning small mb-3">
+                        <i class="fa-solid fa-info-circle me-1"></i>
+                        Voiding this invoice will <strong>reverse all General Ledger postings</strong> and <strong>restore physical stock quantities</strong> to inventory. This action is permanently recorded in the audit trail.
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold small">Reason for Voiding <span class="text-danger">*</span></label>
+                        <textarea name="reason" class="form-control" rows="3" required placeholder="Explain why this invoice is being voided (e.g., entered in error, order cancelled by client)..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger btn-sm fw-semibold">
+                        <i class="fa-solid fa-ban me-1"></i> Confirm & Void Invoice
                     </button>
                 </div>
             </form>

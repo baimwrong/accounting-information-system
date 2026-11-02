@@ -208,6 +208,43 @@
                 margin-left: 0;
             }
         }
+
+        @media print {
+            #sidebar-wrapper,
+            .topbar,
+            .btn,
+            .alert,
+            footer,
+            .modal,
+            .d-print-none {
+                display: none !important;
+            }
+
+            body {
+                background-color: #ffffff !important;
+                color: #000000 !important;
+                font-size: 11pt;
+            }
+
+            #page-content-wrapper {
+                margin-left: 0 !important;
+                padding: 0 !important;
+            }
+
+            .main-content {
+                padding: 0 !important;
+            }
+
+            .card {
+                border: none !important;
+                box-shadow: none !important;
+                padding: 0 !important;
+            }
+
+            .table-bordered th, .table-bordered td {
+                border: 1px solid #dee2e6 !important;
+            }
+        }
     </style>
     @yield('styles')
 </head>
@@ -295,6 +332,12 @@
                     </a>
                 </li>
                 <li>
+                    <a href="{{ route('bank-reconciliations.index') }}" class="nav-link {{ request()->routeIs('bank-reconciliations.*') ? 'active' : '' }}">
+                        <i class="fa-solid fa-scale-unbalanced text-success"></i>
+                        <span>Bank Reconciliation</span>
+                    </a>
+                </li>
+                <li>
                     <a href="{{ route('products.index') }}" class="nav-link {{ request()->routeIs('products.*') ? 'active' : '' }}">
                         <i class="fa-solid fa-boxes-stacked"></i>
                         <span>Products & Services</span>
@@ -356,6 +399,20 @@
                     <a href="{{ route('fiscal-years.index') }}" class="nav-link {{ request()->routeIs('fiscal-years.*') ? 'active' : '' }}">
                         <i class="fa-solid fa-calendar-check"></i>
                         <span>Fiscal Periods</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="{{ route('users.index') }}" class="nav-link {{ request()->routeIs('users.*') ? 'active' : '' }}">
+                        <i class="fa-solid fa-users-gear text-info"></i>
+                        <span>User Management</span>
+                        <span class="badge bg-info text-dark ms-auto">Admin</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="{{ route('backups.index') }}" class="nav-link {{ request()->routeIs('backups.*') ? 'active' : '' }}">
+                        <i class="fa-solid fa-server text-secondary"></i>
+                        <span>Database Backups</span>
+                        <span class="badge bg-secondary text-light ms-auto">Admin</span>
                     </a>
                 </li>
                 @endif

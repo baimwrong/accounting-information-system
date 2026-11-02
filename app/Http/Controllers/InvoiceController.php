@@ -9,7 +9,6 @@ use App\Models\Invoice;
 use App\Models\Payment;
 use App\Models\Product;
 use App\Services\AccountingService;
-use Carbon\Carbon;
 use Exception;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -54,15 +53,7 @@ class InvoiceController extends Controller
         $products = Product::active()->orderBy('name')->get();
         $revenueAccounts = Account::where('type', 'revenue')->where('is_active', true)->orderBy('code')->get();
 
-        // Sequential invoice number INV-YYYYMM-XXXX
-        $ym = Carbon::now()->format('Ym');
-        $latest = Invoice::where('invoice_number', 'LIKE', "INV-{$ym}-%")->latest('id')->first();
-        $seq = 1;
-        if ($latest) {
-            $parts = explode('-', $latest->invoice_number);
-            $seq = ((int) end($parts)) + 1;
-        }
-        $invoiceNumber = sprintf('INV-%s-%04d', $ym, $seq);
+        $invoiceNumber = $this->accountingService->generateInvoiceNumber();
 
         return view('invoices.create', compact('customers', 'products', 'revenueAccounts', 'invoiceNumber'));
     }
@@ -71,7 +62,7 @@ class InvoiceController extends Controller
     {
         $request->validate([
             'customer_id' => ['required', 'exists:contacts,id'],
-            'invoice_number' => ['required', 'string', 'max:50', 'unique:invoices,invoice_number'],
+            'invoice_number' => ['nullable', 'string', 'max:50'],
             'issue_date' => ['required', 'date'],
             'due_date' => ['required', 'date', 'after_or_equal:issue_date'],
             'notes' => ['nullable', 'string'],
@@ -124,8 +115,13 @@ class InvoiceController extends Controller
 
                 $totalAmount = $subtotal + $taxTotal;
 
+                $invoiceNumber = $request->input('invoice_number');
+                if (empty($invoiceNumber) || Invoice::where('invoice_number', $invoiceNumber)->exists()) {
+                    $invoiceNumber = $this->accountingService->generateInvoiceNumber();
+                }
+
                 $invoice = Invoice::create([
-                    'invoice_number' => $request->input('invoice_number'),
+                    'invoice_number' => $invoiceNumber,
                     'customer_id' => $request->input('customer_id'),
                     'issue_date' => $request->input('issue_date'),
                     'due_date' => $request->input('due_date'),
@@ -192,14 +188,7 @@ class InvoiceController extends Controller
 
         try {
             DB::transaction(function () use ($data, $invoice, $request) {
-                $ym = Carbon::now()->format('Ym');
-                $latest = Payment::where('payment_number', 'LIKE', "REC-{$ym}-%")->latest('id')->first();
-                $seq = 1;
-                if ($latest) {
-                    $parts = explode('-', $latest->payment_number);
-                    $seq = ((int) end($parts)) + 1;
-                }
-                $paymentNumber = sprintf('REC-%s-%04d', $ym, $seq);
+                $paymentNumber = $this->accountingService->generatePaymentNumber('received');
 
                 $payment = Payment::create([
                     'payment_number' => $paymentNumber,
@@ -226,6 +215,21 @@ class InvoiceController extends Controller
             });
 
             return back()->with('success', 'Payment recorded and posted to General Ledger.');
+        } catch (Exception $e) {
+            return back()->with('error', $e->getMessage());
+        }
+    }
+
+    public function void(Request $request, Invoice $invoice): RedirectResponse
+    {
+        $request->validate([
+            'reason' => ['required', 'string', 'max:255'],
+        ]);
+
+        try {
+            $this->accountingService->voidInvoice($invoice, $request->user(), $request->input('reason'));
+
+            return back()->with('success', "Invoice {$invoice->invoice_number} has been voided and ledger entries reversed.");
         } catch (Exception $e) {
             return back()->with('error', $e->getMessage());
         }

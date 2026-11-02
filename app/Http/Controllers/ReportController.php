@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Account;
+use App\Models\AuditLog;
 use App\Services\ReportService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -112,6 +113,14 @@ class ReportController extends Controller
             ),
             default => abort(404, 'Invalid report type for export.'),
         };
+
+        AuditLog::record(
+            $request->user(),
+            'export_report',
+            "Exported financial statement '{$type}' as CSV",
+            null,
+            ['start_date' => $startDate, 'end_date' => $endDate, 'as_of_date' => $asOfDate]
+        );
 
         return $this->reportService->exportToCsv($type, $data);
     }

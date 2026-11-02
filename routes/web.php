@@ -3,6 +3,8 @@
 use App\Http\Controllers\AccountController;
 use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\BackupController;
+use App\Http\Controllers\BankReconciliationController;
 use App\Http\Controllers\BillController;
 use App\Http\Controllers\BulkImportController;
 use App\Http\Controllers\ContactController;
@@ -13,6 +15,7 @@ use App\Http\Controllers\JournalEntryController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\ReportController;
+use App\Http\Controllers\UserController;
 use Illuminate\Support\Facades\Route;
 
 // Authentication
@@ -82,6 +85,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/invoices/create', [InvoiceController::class, 'create'])->name('invoices.create');
         Route::post('/invoices', [InvoiceController::class, 'store'])->name('invoices.store');
         Route::post('/invoices/{invoice}/payments', [InvoiceController::class, 'recordPayment'])->name('invoices.payments.store');
+        Route::post('/invoices/{invoice}/void', [InvoiceController::class, 'void'])->name('invoices.void');
     });
     Route::get('/invoices/{invoice}', [InvoiceController::class, 'show'])->name('invoices.show');
 
@@ -91,6 +95,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/bills/create', [BillController::class, 'create'])->name('bills.create');
         Route::post('/bills', [BillController::class, 'store'])->name('bills.store');
         Route::post('/bills/{bill}/payments', [BillController::class, 'recordPayment'])->name('bills.payments.store');
+        Route::post('/bills/{bill}/void', [BillController::class, 'void'])->name('bills.void');
     });
     Route::get('/bills/{bill}', [BillController::class, 'show'])->name('bills.show');
 
@@ -100,6 +105,18 @@ Route::middleware('auth')->group(function () {
         Route::post('/payments/transfer', [PaymentController::class, 'transfer'])->name('payments.transfer');
     });
     Route::get('/payments/{payment}', [PaymentController::class, 'show'])->name('payments.show');
+
+    // Bank Reconciliation
+    Route::get('/bank-reconciliations', [BankReconciliationController::class, 'index'])->name('bank-reconciliations.index');
+    Route::middleware('role:admin|accountant')->group(function () {
+        Route::get('/bank-reconciliations/create', [BankReconciliationController::class, 'create'])->name('bank-reconciliations.create');
+        Route::post('/bank-reconciliations', [BankReconciliationController::class, 'store'])->name('bank-reconciliations.store');
+        Route::post('/bank-reconciliations/{bankReconciliation}/toggle/{payment}', [BankReconciliationController::class, 'togglePayment'])->name('bank-reconciliations.toggle');
+        Route::post('/bank-reconciliations/{bankReconciliation}/clear-all', [BankReconciliationController::class, 'clearAll'])->name('bank-reconciliations.clear-all');
+        Route::post('/bank-reconciliations/{bankReconciliation}/unclear-all', [BankReconciliationController::class, 'unclearAll'])->name('bank-reconciliations.unclear-all');
+        Route::post('/bank-reconciliations/{bankReconciliation}/complete', [BankReconciliationController::class, 'complete'])->name('bank-reconciliations.complete');
+    });
+    Route::get('/bank-reconciliations/{bankReconciliation}', [BankReconciliationController::class, 'show'])->name('bank-reconciliations.show');
 
     // Financial Reports
     Route::prefix('reports')->name('reports.')->group(function () {
@@ -118,6 +135,20 @@ Route::middleware('auth')->group(function () {
     Route::middleware('role:admin')->group(function () {
         Route::post('/fiscal-years', [FiscalYearController::class, 'store'])->name('fiscal-years.store');
         Route::post('/fiscal-years/{fiscalYear}/close', [FiscalYearController::class, 'close'])->name('fiscal-years.close');
+
+        // User Administration
+        Route::get('/users', [UserController::class, 'index'])->name('users.index');
+        Route::post('/users', [UserController::class, 'store'])->name('users.store');
+        Route::put('/users/{user}', [UserController::class, 'update'])->name('users.update');
+        Route::delete('/users/{user}', [UserController::class, 'destroy'])->name('users.destroy');
+        Route::post('/users/{user}/reset-password', [UserController::class, 'resetPassword'])->name('users.reset-password');
+        Route::post('/users/{id}/restore', [UserController::class, 'restore'])->name('users.restore');
+
+        // Database Backups
+        Route::get('/backups', [BackupController::class, 'index'])->name('backups.index');
+        Route::post('/backups', [BackupController::class, 'create'])->name('backups.store');
+        Route::get('/backups/{filename}/download', [BackupController::class, 'download'])->name('backups.download');
+        Route::delete('/backups/{filename}', [BackupController::class, 'destroy'])->name('backups.destroy');
     });
 
     // Bulk Import (Admin Only)

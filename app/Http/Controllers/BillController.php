@@ -9,7 +9,6 @@ use App\Models\Contact;
 use App\Models\Payment;
 use App\Models\Product;
 use App\Services\AccountingService;
-use Carbon\Carbon;
 use Exception;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -54,14 +53,7 @@ class BillController extends Controller
         $products = Product::active()->orderBy('name')->get();
         $expenseAccounts = Account::whereIn('type', ['expense', 'asset'])->where('is_active', true)->orderBy('code')->get();
 
-        $ym = Carbon::now()->format('Ym');
-        $latest = Bill::where('bill_number', 'LIKE', "BILL-{$ym}-%")->latest('id')->first();
-        $seq = 1;
-        if ($latest) {
-            $parts = explode('-', $latest->bill_number);
-            $seq = ((int) end($parts)) + 1;
-        }
-        $billNumber = sprintf('BILL-%s-%04d', $ym, $seq);
+        $billNumber = $this->accountingService->generateBillNumber();
 
         return view('bills.create', compact('vendors', 'products', 'expenseAccounts', 'billNumber'));
     }
@@ -70,7 +62,7 @@ class BillController extends Controller
     {
         $request->validate([
             'vendor_id' => ['required', 'exists:contacts,id'],
-            'bill_number' => ['required', 'string', 'max:50', 'unique:bills,bill_number'],
+            'bill_number' => ['nullable', 'string', 'max:50'],
             'bill_date' => ['required', 'date'],
             'due_date' => ['required', 'date', 'after_or_equal:bill_date'],
             'notes' => ['nullable', 'string'],
@@ -116,8 +108,13 @@ class BillController extends Controller
 
                 $totalAmount = $subtotal + $taxTotal;
 
+                $billNumber = $request->input('bill_number');
+                if (empty($billNumber) || Bill::where('bill_number', $billNumber)->exists()) {
+                    $billNumber = $this->accountingService->generateBillNumber();
+                }
+
                 $bill = Bill::create([
-                    'bill_number' => $request->input('bill_number'),
+                    'bill_number' => $billNumber,
                     'vendor_id' => $request->input('vendor_id'),
                     'bill_date' => $request->input('bill_date'),
                     'due_date' => $request->input('due_date'),
@@ -183,14 +180,7 @@ class BillController extends Controller
 
         try {
             DB::transaction(function () use ($data, $bill, $request) {
-                $ym = Carbon::now()->format('Ym');
-                $latest = Payment::where('payment_number', 'LIKE', "DIS-{$ym}-%")->latest('id')->first();
-                $seq = 1;
-                if ($latest) {
-                    $parts = explode('-', $latest->payment_number);
-                    $seq = ((int) end($parts)) + 1;
-                }
-                $paymentNumber = sprintf('DIS-%s-%04d', $ym, $seq);
+                $paymentNumber = $this->accountingService->generatePaymentNumber('sent');
 
                 $payment = Payment::create([
                     'payment_number' => $paymentNumber,
@@ -217,6 +207,21 @@ class BillController extends Controller
             });
 
             return back()->with('success', 'Bill payment recorded and posted to General Ledger.');
+        } catch (Exception $e) {
+            return back()->with('error', $e->getMessage());
+        }
+    }
+
+    public function void(Request $request, Bill $bill): RedirectResponse
+    {
+        $request->validate([
+            'reason' => ['required', 'string', 'max:255'],
+        ]);
+
+        try {
+            $this->accountingService->voidBill($bill, $request->user(), $request->input('reason'));
+
+            return back()->with('success', "Bill {$bill->bill_number} has been voided and ledger/inventory reversed.");
         } catch (Exception $e) {
             return back()->with('error', $e->getMessage());
         }

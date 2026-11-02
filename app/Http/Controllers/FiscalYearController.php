@@ -31,6 +31,21 @@ class FiscalYearController extends Controller
             'end_date' => ['required', 'date', 'after:start_date'],
         ]);
 
+        $overlap = FiscalYear::where(function ($q) use ($data) {
+            $q->whereBetween('start_date', [$data['start_date'], $data['end_date']])
+                ->orWhereBetween('end_date', [$data['start_date'], $data['end_date']])
+                ->orWhere(function ($sub) use ($data) {
+                    $sub->where('start_date', '<=', $data['start_date'])
+                        ->where('end_date', '>=', $data['end_date']);
+                });
+        })->exists();
+
+        if ($overlap) {
+            return back()->withInput()->withErrors([
+                'start_date' => 'The selected date range overlaps with an existing fiscal period.',
+            ]);
+        }
+
         $fy = FiscalYear::create([
             'name' => $data['name'],
             'start_date' => $data['start_date'],
